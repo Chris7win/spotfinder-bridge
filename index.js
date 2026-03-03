@@ -13,7 +13,7 @@ const SUPABASE_URL  = process.env.SUPABASE_URL  || "https://wvhsbojctjegijyyoqby
 const SUPABASE_KEY  = process.env.SUPABASE_KEY  || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind2aHNib2pjdGplZ2lqeXlvcWJ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE0MjI0NjAsImV4cCI6MjA4Njk5ODQ2MH0.1EFbIFpLMxtAaw1UfQj56r8zcQaX13yb_MHtj8ZXM7A";
 
 // ── MQTT Config ──────────────────────────────────────────────
-const MQTT_BROKER   = "mqtt://broker.hivemq.com";
+const MQTT_BROKER = "mqtt://test.mosquitto.org";
 const MQTT_TOPIC    = "spotfinder/slots";
 const MQTT_CLIENT   = `bridge_${Math.random().toString(16).slice(2, 8)}`;
 
