@@ -1,21 +1,21 @@
 // ============================================================
-//  SPOTFINDER IOT — MQTT to Supabase Bridge
+//  SPOTFINDER IOT — MQTT to Supabase Bridge v3.0
 //  Supabase URL  : https://wvhsbojctjegijyyoqby.supabase.co
-//  Table         : slot_status
-//  Operation     : UPDATE rows (slot_num 1-4 already exist)
+//  Table         : parking_slots (single source of truth)
+//  Operation     : UPDATE is_occupied + last_updated on rows 1-4
 // ============================================================
 
 const mqtt = require("mqtt");
 const { createClient } = require("@supabase/supabase-js");
 
 // ── Supabase Config ──────────────────────────────────────────
-const SUPABASE_URL  = process.env.SUPABASE_URL  || "https://wvhsbojctjegijyyoqby.supabase.co";
-const SUPABASE_KEY  = process.env.SUPABASE_KEY  || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind2aHNib2pjdGplZ2lqeXlvcWJ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE0MjI0NjAsImV4cCI6MjA4Njk5ODQ2MH0.1EFbIFpLMxtAaw1UfQj56r8zcQaX13yb_MHtj8ZXM7A";
+const SUPABASE_URL = process.env.SUPABASE_URL || "https://wvhsbojctjegijyyoqby.supabase.co";
+const SUPABASE_KEY = process.env.SUPABASE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind2aHNib2pjdGplZ2lqeXlvcWJ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE0MjI0NjAsImV4cCI6MjA4Njk5ODQ2MH0.1EFbIFpLMxtAaw1UfQj56r8zcQaX13yb_MHtj8ZXM7A";
 
 // ── MQTT Config ──────────────────────────────────────────────
 const MQTT_BROKER = "mqtt://test.mosquitto.org";
-const MQTT_TOPIC    = "spotfinder/slots";
-const MQTT_CLIENT   = `bridge_${Math.random().toString(16).slice(2, 8)}`;
+const MQTT_TOPIC  = "spotfinder/slots";
+const MQTT_CLIENT = `bridge_${Math.random().toString(16).slice(2, 8)}`;
 
 // ── Init clients ─────────────────────────────────────────────
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -44,9 +44,11 @@ client.on("offline",   ()  => console.warn("[MQTT] Offline"));
 
 // ════════════════════════════════════════════════════════════
 //  MESSAGE HANDLER
-//  Payload from Blue Pill:
-//  {"id":"spotfinder_node1","slots":[0,1,0,0],"free":3}
-//  slots[n]: 0 = free, 1 = occupied
+//  Incoming: {"slot1":0,"slot2":1,"slot3":0,"slot4":1,"free":2,"total":4,"ts":12345}
+//  0 = free, 1 = occupied
+//
+//  Writes to: parking_slots.is_occupied for slot_id 1-4
+//  Dashboard realtime channel picks up the change automatically
 // ════════════════════════════════════════════════════════════
 client.on("message", async (topic, message) => {
   const raw = message.toString();
@@ -61,37 +63,39 @@ client.on("message", async (topic, message) => {
     return;
   }
 
-  // Validate slots array
-  if (!Array.isArray(data.slots) || data.slots.length < 4) {
-    console.error("[ERROR] Missing slots array in payload");
+  // Validate
+  if (data.slot1 === undefined || data.slot2 === undefined ||
+      data.slot3 === undefined || data.slot4 === undefined) {
+    console.error("[ERROR] Missing slot keys in payload");
     return;
   }
 
-  const now = new Date().toISOString();
+  const slots = [data.slot1, data.slot2, data.slot3, data.slot4];
+  const now   = new Date().toISOString();
 
-  // Update each slot row individually (slot_num 1 to 4)
+  // Update is_occupied in parking_slots for rows slot_id 1-4
   for (let i = 0; i < 4; i++) {
-    const slot_num       = i + 1;
-    const is_occupied    = data.slots[i] === 1;
-    const physical_status = is_occupied ? "occupied" : "free";
-    const display_status  = is_occupied ? "O" : "F";
+    const slot_id     = i + 1;
+    const is_occupied = slots[i] === 1;
 
     const { error } = await supabase
-      .from("slot_status")
+      .from("parking_slots")
       .update({
-        physical_status,
-        display_status,
-        last_updated:   now,
-        last_heartbeat: now,
-        is_active:      true,
+        is_occupied,
+        last_updated: now,
       })
-      .eq("slot_num", slot_num);
+      .eq("slot_id", slot_id);
 
-    if (error) {
-      console.error(`[Supabase] ✗ slot_num=${slot_num} error:`, error.message);
-    } else {
-      console.log(`[Supabase] ✓ slot_num=${slot_num} → ${physical_status} (${display_status})`);
-    }
+    if (error) console.error(`[Supabase] ✗ slot_id=${slot_id}:`, error.message);
+    else       console.log(`[Supabase] ✓ slot_id=${slot_id} → is_occupied=${is_occupied}`);
+  }
+
+  // Also update last_heartbeat in slot_status (hardware health)
+  for (let i = 0; i < 4; i++) {
+    await supabase
+      .from("slot_status")
+      .update({ last_heartbeat: now, physical_status: "ok" })
+      .eq("slot_num", i + 1);
   }
 
   console.log(`[Done] Free slots: ${data.free}/4\n`);
@@ -114,6 +118,6 @@ console.log("║    SPOTFINDER IOT — MQTT → Supabase Bridge  ║");
 console.log("╠══════════════════════════════════════════════╣");
 console.log(`║  MQTT    : ${MQTT_BROKER}`);
 console.log(`║  Topic   : ${MQTT_TOPIC}`);
-console.log(`║  Table   : slot_status (UPDATE mode)`);
+console.log(`║  Table   : parking_slots (is_occupied)`);
 console.log(`║  Supabase: ${SUPABASE_URL}`);
 console.log("╚══════════════════════════════════════════════╝\n");
